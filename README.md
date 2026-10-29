@@ -1,0 +1,106 @@
+# AI Usage Bar
+
+A macOS menu bar app that shows how much of your AI subscription limits is
+left: Codex (ChatGPT Plus or Business), Claude (Pro or Max) and Cursor. It is
+the Mac counterpart of the Cardputer Hub AI USAGE mini app and reads the same
+sources, with nothing to configure.
+
+```text
+Cx 64·81  Cl 35·88  Cu 4        ← 5-hour · week left per provider
+```
+
+Click the title for one card per provider: each limit as a bar, the time to
+its reset, Codex Plus reset credits, Cursor spend, and when the sample was read.
+
+## Install
+
+1. Download `AI-Usage-Bar-<version>.zip` from
+   [Releases](../../releases/latest), unzip it, and move
+   **AI Usage Bar.app** to Applications.
+2. Open it. Release builds without a Developer ID certificate are ad-hoc
+   signed, so macOS blocks the first launch: open **System Settings → Privacy
+   & Security** and choose **Open Anyway**, or run
+   `xattr -dr com.apple.quarantine "/Applications/AI Usage Bar.app"` once.
+3. When macOS asks to let AI Usage Bar read `Claude Code-credentials` or
+   `cursor-access-token`, choose **Always Allow**.
+
+Requires macOS 13 or later on Apple silicon or Intel.
+
+## Providers
+
+| Provider | Source | Shown |
+| --- | --- | --- |
+| Codex | the installed `codex` CLI (`codex app-server`, `account/rateLimits/read`) | Plus: 5-hour and weekly windows, reset credits. Business: workspace credits |
+| Claude | the Claude Code Keychain item and `api.anthropic.com/api/oauth/usage` | Plan-wide 5-hour and weekly windows |
+| Cursor | the Cursor Agent Keychain session and `cursor.com/api/usage-summary` | Personal spend against the limit |
+
+A provider that is not installed or signed in is left out. A provider that
+fails keeps its last sample, marked **stale** after 90 seconds. A reset time
+passing never counts as replenished quota: the last reading stays until a new
+one arrives.
+
+The app only reads credentials; it never writes, refreshes or sends them
+anywhere except the provider's own endpoint. Claude Code refreshes its token
+only while it runs, so Claude may turn stale while Claude Code is closed.
+
+The Claude usage endpoint rate-limits callers. The app asks it at most every
+two minutes and backs off on HTTP 429, so it can run next to Cardputer
+Companion, which polls the same account once a minute.
+
+## Settings
+
+* **Show** — remaining (default, as on Cardputer) or used capacity. Bar colors
+  always follow what is left: green above 50%, blue from 20%, red below 20%,
+  and `!` below 5%.
+* **Launch at login.**
+* **Notifications** when a limit first drops below 20% and below 5% left.
+  The first reading after launch only sets the baseline.
+* **Providers** — drag to reorder; uncheck to leave a provider out of the
+  menu bar title (it stays in the popover).
+
+## Build
+
+Needs the Xcode Command Line Tools (Swift 5.9 or later).
+
+```sh
+make check      # core and provider checks, then package dist/AI Usage Bar.app
+make run        # package and open
+make install    # package and copy to ~/Applications (INSTALL_DIR=… to change)
+make zip        # dist/AI-Usage-Bar-<version>.zip and its .sha256
+```
+
+`scripts/package_app.sh` takes `VERSION=1.2.3` (default: the latest `v*`
+tag), `UNIVERSAL=1` for an arm64 + x86_64 binary (needs full Xcode), and
+`AIUSAGEBAR_SIGNING_IDENTITY` for a code-signing identity. With the default
+ad-hoc signature, macOS ties Keychain **Always Allow** to that exact build and
+asks again after a rebuild.
+
+## Releases
+
+`.github/workflows/ci.yml` runs the checks and a universal build on every
+push and pull request and uploads the zip as a workflow artifact.
+
+Pushing a tag publishes a release:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` builds the universal app with that version,
+zips it, and attaches the zip and its SHA-256 to a GitHub release. To sign
+with a Developer ID and notarize, add these repository secrets:
+`MACOS_CERTIFICATE_P12` (base64 of the .p12), `MACOS_CERTIFICATE_PASSWORD`,
+`MACOS_SIGNING_IDENTITY`, and for notarization `NOTARY_APPLE_ID`,
+`NOTARY_TEAM_ID`, `NOTARY_PASSWORD` (an app-specific password).
+
+## Layout
+
+```text
+Sources/UsageCore          model, provider normalization, presentation, settings, alerts
+Sources/UsageProviders     Codex, Claude and Cursor providers and the refresh collector
+Sources/AIUsageBar         AppKit status item, SwiftUI popover and Settings
+Sources/*Check             check executables run by `make check`
+```
+
+The provider and normalization code started as a copy of Cardputer Hub's
+Companion (`companion/macos`); the two evolve independently.

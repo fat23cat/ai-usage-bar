@@ -1,0 +1,74 @@
+name: Release
+
+# Push a tag like v0.1.0 to publish a GitHub release with the zipped app.
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      # Optional Developer ID signing and notarization. Without these secrets
+      # the app is ad-hoc signed and macOS asks to confirm the first launch.
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+      NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+      NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checks
+        run: |
+          swift run UsageCoreCheck
+          swift run UsageProvidersCheck
+
+      - name: Import signing certificate
+        if: env.MACOS_CERTIFICATE_P12 != ''
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "AIUSAGEBAR_SIGNING_IDENTITY=$MACOS_SIGNING_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Package universal app
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}" UNIVERSAL=1 bash scripts/package_app.sh
+          lipo -archs "dist/AI Usage Bar.app/Contents/MacOS/AIUsageBar"
+
+      - name: Notarize
+        if: env.MACOS_CERTIFICATE_P12 != '' && env.NOTARY_APPLE_ID != ''
+        run: |
+          ditto -c -k --keepParent "dist/AI Usage Bar.app" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --wait \
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD"
+          xcrun stapler staple "dist/AI Usage Bar.app"
+
+      - name: Zip
+        run: bash scripts/zip_app.sh
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.zip.sha256 \
+            --title "AI Usage Bar ${GITHUB_REF_NAME#v}" --generate-notes \
+            --notes "Download **AI-Usage-Bar-${GITHUB_REF_NAME#v}.zip**, unzip it, and move **AI Usage Bar.app** to Applications. See the README for the first launch."

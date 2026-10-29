@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Swift version
+        run: swift --version
+      - name: Core and provider checks, package
+        run: make check
+      - name: Universal build
+        run: UNIVERSAL=1 bash scripts/package_app.sh && lipo -archs "dist/AI Usage Bar.app/Contents/MacOS/AIUsageBar"
+      - name: Zip
+        run: bash scripts/zip_app.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AI-Usage-Bar-${{ github.sha }}
+          path: dist/*.zip
+          retention-days: 14
