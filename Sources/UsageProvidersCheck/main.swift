@@ -479,7 +479,10 @@ func collectorExpiresCachedFreshnessWhileRefreshIsPending() {
     expect(waitUntil { collector.snapshot()?.providers.first?.freshness == .fresh })
     collector.refresh()
     expect(waitUntil { codex.pending == 1 && cursor.pending == 1 })
-    clockNow = Date(timeIntervalSince1970: 1091)
+    // A sample stays fresh through one missed two-minute refresh.
+    clockNow = Date(timeIntervalSince1970: 1209)
+    expect(collector.snapshot()?.providers.first?.freshness == .fresh)
+    clockNow = Date(timeIntervalSince1970: 1211)
     expect(collector.snapshot()?.providers.first?.freshness == .stale)
     codex.complete(sample)
     cursor.complete(nil, absent: true)
@@ -487,7 +490,7 @@ func collectorExpiresCachedFreshnessWhileRefreshIsPending() {
     collector.stop()
 }
 
-func collectorRefreshesEveryThirtySecondsOutsideMainRunLoop() {
+func collectorRefreshesEveryTwoMinutesOutsideMainRunLoop() {
     let codex = FakeUsageProvider()
     let cursor = FakeUsageProvider()
     let scheduler = FakePeriodicScheduler()
@@ -495,7 +498,7 @@ func collectorRefreshesEveryThirtySecondsOutsideMainRunLoop() {
                                      schedulePeriodic: scheduler.schedule)
     collector.start()
     expect(waitUntil { codex.pending == 1 && cursor.pending == 1 })
-    expect(scheduler.interval == 30)
+    expect(scheduler.interval == 120)
     codex.complete(nil, absent: true)
     cursor.complete(nil, absent: true)
     scheduler.fire()
@@ -657,7 +660,7 @@ func cursorUnauthorizedRefreshKeepsPreviousSampleStale() {
     collector.refresh()
     expect(waitUntil { codex.pending == 1 && http.requests.count == 3 })
     expect(collector.snapshot()?.providers.first?.freshness == .fresh)
-    timeLock.lock(); clockNow = Date(timeIntervalSince1970: 1091); timeLock.unlock()
+    timeLock.lock(); clockNow = Date(timeIntervalSince1970: 1211); timeLock.unlock()
     codex.complete(nil, absent: true)
     http.respond(status: 401)
     expect(waitUntil { collector.snapshot()?.providers.first?.freshness == .stale })
@@ -1001,7 +1004,8 @@ func claudeRateLimitBacksOffWithoutFailure() {
     http.respond(status: 200, object: claudeUsage)
     expect(waitUntil { first.done })
 
-    // Retry-After wins over the first two-minute pause; the sample stays current.
+    // Retry-After wins over the first pause of one request interval; the
+    // sample stays current.
     clock.now = Date(timeIntervalSince1970: 10_130)
     let limited = refreshed(provider)
     expect(waitUntil { http.requests.count == 2 })
@@ -1013,7 +1017,7 @@ func claudeRateLimitBacksOffWithoutFailure() {
     expect(waitUntil { old.done })
     expect(old.outcome == .unavailable && http.requests.count == 2)
 
-    // Without Retry-After the pause doubles to four minutes.
+    // Without Retry-After the pause doubles to two request intervals.
     clock.now = Date(timeIntervalSince1970: 10_731)
     let again = refreshed(provider)
     expect(waitUntil { http.requests.count == 3 })
@@ -1024,7 +1028,7 @@ func claudeRateLimitBacksOffWithoutFailure() {
     _ = refreshed(provider)
     Thread.sleep(forTimeInterval: 0.02)
     expect(http.requests.count == 3)
-    clock.now = Date(timeIntervalSince1970: 10_972)
+    clock.now = Date(timeIntervalSince1970: 10_952)
     let recovered = refreshed(provider)
     expect(waitUntil { http.requests.count == 4 })
     http.respond(status: 200, object: claudeUsage)
@@ -1082,7 +1086,7 @@ func claudeExpiredTokenIsUnavailable() {
     expect(waitUntil { paused.done })
     expect(paused.outcome == .unavailable && credentials.reads == reads + 1)
     expect(http.requests.count == 1)
-    clock.now = Date(timeIntervalSince1970: 10_120)
+    clock.now = Date(timeIntervalSince1970: 10_110)
     _ = refreshed(provider)
     expect(waitUntil { http.requests.count == 2 })
 
@@ -1304,7 +1308,7 @@ func collectorStampsSamplesAndReportsChanges() {
     collector.stop()
 }
 
-func claudeAsksAtMostEveryTwoMinutes() {
+func claudeAsksAtMostEveryRefreshInterval() {
     let clock = TestClock()
     let http = FakeHTTP()
     let provider = claudeProvider(FakeClaudeCredentials(claudeCredential()), http, clock)
@@ -1312,11 +1316,13 @@ func claudeAsksAtMostEveryTwoMinutes() {
     expect(waitUntil { http.requests.count == 1 })
     http.respond(status: 200, object: claudeUsage)
     expect(waitUntil { first.sample?.sampledAt == 10_000 })
-    clock.now = Date(timeIntervalSince1970: 10_090)
+    // Wake and menu refreshes between periodic ones reuse the sample.
+    clock.now = Date(timeIntervalSince1970: 10_109)
     let cached = refreshed(provider)
     expect(waitUntil { cached.done })
     expect(http.requests.count == 1 && cached.sample?.sampledAt == 10_000)
-    clock.now = Date(timeIntervalSince1970: 10_120)
+    // A two-minute periodic refresh that fires a little early still asks.
+    clock.now = Date(timeIntervalSince1970: 10_110)
     _ = refreshed(provider)
     expect(waitUntil { http.requests.count == 2 })
 }
@@ -1477,7 +1483,7 @@ func codexWithoutAccountIsAbsent() {
         codexProviderHandlesAbsenceAndRealBusinessLimits()
         codexRestrictionKeepsHistoryWithoutFailureRetry()
         collectorPublishesHomeAndWorkProviderSets()
-        collectorRefreshesEveryThirtySecondsOutsideMainRunLoop()
+        collectorRefreshesEveryTwoMinutesOutsideMainRunLoop()
         collectorExpiresCachedFreshnessWhileRefreshIsPending()
         collectorCoalescesRefreshRequestedDuringAnActiveCycle()
         collectorRetriesProviderFailuresWithBoundedBackoff()
@@ -1504,7 +1510,7 @@ func codexWithoutAccountIsAbsent() {
         collectorPublishesPersonalCodexAndClaude()
         collectorShowsElapsedStaleWindowsAsHistorical()
         collectorStampsSamplesAndReportsChanges()
-        claudeAsksAtMostEveryTwoMinutes()
+        claudeAsksAtMostEveryRefreshInterval()
         claudeAccessRequestAsksAgainAtOnce()
         collectorReportsProvidersThatNeedAccess()
         collectorReportsDetectedProvidersWithoutReading()

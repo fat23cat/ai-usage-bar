@@ -7,7 +7,8 @@ import UsageProviders
 final class UsageStore: ObservableObject {
     private static let settingsKey = "settings"
     /// Countdowns and sample ages are shown in minutes, and the collector marks
-    /// samples stale after 90 seconds; this keeps both current between changes.
+    /// samples stale after three and a half minutes; this keeps both current
+    /// between changes.
     private static let tickInterval: TimeInterval = 15
 
     @Published private(set) var snapshot: AiUsageSnapshot?
