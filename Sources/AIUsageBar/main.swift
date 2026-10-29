@@ -5,13 +5,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = UsageStore()
     private let notifier = Notifier()
     private let loginItem = LoginItem()
-    private var statusItem: StatusItemController?
+    private var menuBar: MenuBarController?
     private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         notifier.start(requestingAuthorization: store.settings.notificationsEnabled)
         store.onAlerts = { [notifier] in notifier.post($0) }
-        statusItem = StatusItemController(store: store) { [weak self] in self?.showSettings() }
+        menuBar = MenuBarController(store: store, loginItem: loginItem) { [weak self] in
+            self?.showSettings()
+        }
         store.start()
     }
 

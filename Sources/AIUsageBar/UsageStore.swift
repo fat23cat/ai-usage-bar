@@ -3,7 +3,7 @@ import Foundation
 import UsageCore
 import UsageProviders
 
-/// Main-thread state for the menu bar title, the popover and Settings.
+/// Main-thread state for the menu bar title, the menu and Settings.
 final class UsageStore: ObservableObject {
     private static let settingsKey = "settings"
     /// Countdowns and sample ages are shown in minutes, and the collector marks
@@ -54,6 +54,11 @@ final class UsageStore: ObservableObject {
     func refresh() {
         collector.refresh()
         pull()
+    }
+
+    /// Shows the provider's Keychain prompt again.
+    func requestAccess(_ provider: AiProviderId) {
+        collector.requestAccess(provider)
     }
 
     private func pull() {

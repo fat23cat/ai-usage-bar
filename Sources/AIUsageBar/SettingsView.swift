@@ -79,7 +79,7 @@ struct SettingsView: View {
             } header: {
                 Text("Providers")
             } footer: {
-                Text("Drag to reorder. Unchecked providers stay in the popover but leave the menu bar.")
+                Text("Drag to reorder. Unchecked providers stay in the menu but leave the menu bar title.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

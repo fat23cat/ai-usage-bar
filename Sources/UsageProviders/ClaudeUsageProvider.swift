@@ -1,5 +1,6 @@
 import UsageCore
 import Foundation
+import os
 import Security
 
 struct ClaudeCredential {
@@ -67,6 +68,9 @@ private final class RefreshCompletion {
     }
 }
 
+/// Diagnostics without credentials: `log stream --predicate 'subsystem == "org.aiusagebar.app"'`.
+private let log = Logger(subsystem: "org.aiusagebar.app", category: "claude")
+
 final class ClaudeUsageProvider: AiUsageProviderRefreshing {
     /// A declined initial prompt pauses even silent reads for this interval.
     static let deniedRetryInterval: TimeInterval = 3600
@@ -98,6 +102,8 @@ final class ClaudeUsageProvider: AiUsageProviderRefreshing {
     private var attemptedCredentialRead = false
     private var interactionRetryAt = Date.distantPast
     private var deniedAt: Date?
+    /// The last read was declined or needed a prompt this app may not show.
+    private var needsAccess = false
     private var lastSample: (sample: AiUsageProviderSnapshot, at: Date)?
     private var nextRequestAt = Date.distantPast
     private var rateLimitPause: TimeInterval = 0
@@ -119,7 +125,7 @@ final class ClaudeUsageProvider: AiUsageProviderRefreshing {
         let currentTime = now()
         lock.lock()
         if let deniedAt, currentTime.timeIntervalSince(deniedAt) < Self.deniedRetryInterval {
-            lock.unlock(); finish(.absent); return
+            lock.unlock(); finish(.accessNeeded); return
         }
         if let credential, !expired(credential) {
             // Recheck beside the request, so a failed or slow read never costs a
@@ -153,16 +159,27 @@ final class ClaudeUsageProvider: AiUsageProviderRefreshing {
     private func readKeychain(_ finish: RefreshCompletion?, allowInteraction: Bool) {
         readQueue.async { [self] in
             let result = credentials.read(allowInteraction: allowInteraction)
+            switch result {
+            case .value(let value):
+                let left = value.expiresAt.map { Int($0.timeIntervalSince(now())) }
+                log.info("keychain: token, expires in \(left ?? 0, privacy: .public)s, interactive \(allowInteraction, privacy: .public)")
+            case .absent: log.info("keychain: no item")
+            case .denied: log.info("keychain: denied")
+            case .failed: log.info("keychain: unreadable item")
+            case .interactionRequired:
+                log.info("keychain: needs a prompt, interactive \(allowInteraction, privacy: .public)")
+            }
             lock.lock()
             reading = false
             switch result {
             case .value(let value):
                 credential = value; credentialReadAt = now(); deniedAt = nil
-                interactionRetryAt = .distantPast
-            case .absent: credential = nil; deniedAt = nil
-            case .denied: credential = nil; deniedAt = now()
+                interactionRetryAt = .distantPast; needsAccess = false
+            case .absent: credential = nil; deniedAt = nil; needsAccess = false
+            case .denied: credential = nil; deniedAt = now(); needsAccess = true
             // Keep a still-valid token; the next recheck is due in five minutes.
             case .interactionRequired:
+                needsAccess = true
                 credentialReadAt = now()
                 interactionRetryAt = now().addingTimeInterval(Self.credentialRecheckInterval)
             case .failed: if credential != nil { credentialReadAt = now() }
@@ -176,7 +193,8 @@ final class ClaudeUsageProvider: AiUsageProviderRefreshing {
             case .value(let value) where expired(value): finish(cached)
             case .value where throttled: finish(cached)
             case .value(let value): request(value, finish)
-            case .absent, .denied: finish(.absent)
+            case .absent: finish(.absent)
+            case .denied: finish(.accessNeeded)
             case .interactionRequired: finish(cached)
             case .failed: finish(.failed)
             }
@@ -185,11 +203,19 @@ final class ClaudeUsageProvider: AiUsageProviderRefreshing {
 
     func stop() { http.stop() }
 
-    /// The last sample, aged to `now`, while it is recent; otherwise unavailable.
+    func requestAccess() {
+        lock.lock(); defer { lock.unlock() }
+        deniedAt = nil
+        attemptedCredentialRead = false
+        interactionRetryAt = .distantPast
+    }
+
+    /// The last sample, aged to `now`, while it is recent; otherwise unavailable,
+    /// or access needed when the Keychain stopped letting this app read.
     /// Callers hold `lock`.
     private func cachedOutcome(_ now: Date) -> AiUsageRefreshOutcome {
         guard let lastSample, now.timeIntervalSince(lastSample.at) < Self.sampleLifetime
-        else { return .unavailable }
+        else { return needsAccess ? .accessNeeded : .unavailable }
         return .sample(lastSample.sample.aged(now: now))
     }
 
@@ -205,8 +231,9 @@ final class ClaudeUsageProvider: AiUsageProviderRefreshing {
         request.setValue("Bearer \(credential.accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        http.get(request) { [self] data, response, _ in
+        http.get(request) { [self] data, response, error in
             let currentTime = now()
+            log.info("usage: HTTP \(response?.statusCode ?? 0, privacy: .public), retry-after \(response?.value(forHTTPHeaderField: "Retry-After") ?? "-", privacy: .public), error \(error.map { String(describing: type(of: $0)) } ?? "-", privacy: .public)")
             lock.lock(); defer { lock.unlock() }
             switch response?.statusCode {
             case 401, 403:

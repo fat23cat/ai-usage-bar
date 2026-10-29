@@ -9,9 +9,9 @@ public enum UsageDisplayMode: String, Codable, CaseIterable {
 
 public struct UsageSettings: Equatable, Codable {
     public var displayMode: UsageDisplayMode
-    /// Display order of providers in the menu bar and in the popover.
+    /// Display order of providers in the menu bar title and in the menu.
     public var providerOrder: [AiProviderId]
-    /// Providers left out of the menu bar title; the popover still shows them.
+    /// Providers left out of the menu bar title; the menu still shows them.
     public var hiddenInMenuBar: Set<AiProviderId>
     public var notificationsEnabled: Bool
 

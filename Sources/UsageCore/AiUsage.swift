@@ -97,11 +97,17 @@ public struct AiUsageSnapshot: Equatable {
     public var providers: [AiUsageProviderSnapshot]
     /// Providers whose credential read waits for a Keychain prompt.
     public var waiting: [AiProviderId]
+    /// Providers this app may not read until the user allows Keychain access.
+    public var accessNeeded: [AiProviderId]
+    /// Detected providers without any reading yet: their last refresh failed or
+    /// the source cannot answer now (a rate limit, an expired sign-in).
+    public var unreadable: [AiProviderId]
 
     public init(generation: UInt32 = 0, state: AiUsageState = .discovering,
-                providers: [AiUsageProviderSnapshot] = [], waiting: [AiProviderId] = []) {
+                providers: [AiUsageProviderSnapshot] = [], waiting: [AiProviderId] = [],
+                accessNeeded: [AiProviderId] = [], unreadable: [AiProviderId] = []) {
         self.generation = generation; self.state = state; self.providers = providers
-        self.waiting = waiting
+        self.waiting = waiting; self.accessNeeded = accessNeeded; self.unreadable = unreadable
     }
 }
 

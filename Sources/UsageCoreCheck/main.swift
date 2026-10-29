@@ -119,31 +119,49 @@ func cardChecks() {
            "no reset credits, no line")
 }
 
-func popoverChecks() {
+func menuContentChecks() {
     let settings = UsageSettings()
-    expect(UsagePresentation.popover(nil, settings: settings, now: now) == .checking,
+    expect(UsagePresentation.menuContent(nil, settings: settings, now: now) == .checking,
            "no snapshot yet")
-    expect(UsagePresentation.popover(AiUsageSnapshot(state: .discovering), settings: settings,
+    expect(UsagePresentation.menuContent(AiUsageSnapshot(state: .discovering), settings: settings,
                                      now: now) == .checking, "first discovery")
-    expect(UsagePresentation.popover(AiUsageSnapshot(state: .ready), settings: settings,
+    expect(UsagePresentation.menuContent(AiUsageSnapshot(state: .ready), settings: settings,
                                      now: now) == .empty, "nothing signed in")
     let snapshot = AiUsageSnapshot(state: .ready,
                                    providers: [codexPlus, cursorEnterprise, claudeMax])
-    guard case .cards(let cards, let waiting) =
-        UsagePresentation.popover(snapshot, settings: settings, now: now) else {
+    guard case .cards(let cards, let waiting, let access, _) =
+        UsagePresentation.menuContent(snapshot, settings: settings, now: now) else {
         return expect(false, "cards for signed-in providers")
     }
-    expect(cards.map(\.provider) == [.codex, .claude, .cursor] && waiting.isEmpty,
-           "cards follow the configured order")
+    expect(cards.map(\.provider) == [.codex, .claude, .cursor] && waiting.isEmpty &&
+           access.isEmpty, "cards follow the configured order")
     let prompt = AiUsageSnapshot(state: .discovering, providers: [], waiting: [.claude])
-    expect(UsagePresentation.popover(prompt, settings: settings, now: now) ==
-           .cards([], waiting: [.claude]), "a Keychain prompt is shown, not a spinner")
+    expect(UsagePresentation.menuContent(prompt, settings: settings, now: now) ==
+           .cards([], waiting: [.claude], accessNeeded: []),
+           "a Keychain prompt is shown, not a spinner")
     let answered = AiUsageSnapshot(state: .ready, providers: [claudeMax], waiting: [.claude])
-    guard case .cards(_, let none) =
-        UsagePresentation.popover(answered, settings: settings, now: now) else {
+    guard case .cards(_, let none, _, _) =
+        UsagePresentation.menuContent(answered, settings: settings, now: now) else {
         return expect(false, "cards while a recheck waits")
     }
     expect(none.isEmpty, "a provider with a sample is not listed as waiting")
+    let declined = AiUsageSnapshot(state: .ready, providers: [], accessNeeded: [.claude])
+    expect(UsagePresentation.menuContent(declined, settings: settings, now: now) ==
+           .cards([], waiting: [], accessNeeded: [.claude]),
+           "a declined provider is offered access instead of vanishing")
+    let silent = AiUsageSnapshot(state: .ready, providers: [codexPlus], unreadable: [.claude])
+    expect(UsagePresentation.menuContent(silent, settings: settings, now: now) ==
+           .cards([UsagePresentation.card(codexPlus, mode: .left, now: now)], waiting: [],
+                  accessNeeded: [], unreadable: [.claude]),
+           "a detected provider without a reading says so instead of vanishing")
+    let staleDeclined = AiUsageSnapshot(state: .ready, providers: [claudeMax],
+                                        accessNeeded: [.claude])
+    guard case .cards(let kept, _, let offered, _) =
+        UsagePresentation.menuContent(staleDeclined, settings: settings, now: now) else {
+        return expect(false, "cards while access is needed")
+    }
+    expect(kept.map(\.provider) == [.claude] && offered == [.claude],
+           "the stale card stays and access is still offered")
 }
 
 func menuBarChecks() {
@@ -151,14 +169,20 @@ func menuBarChecks() {
     let snapshot = AiUsageSnapshot(state: .ready,
                                    providers: [codexPlus, cursorEnterprise, claudeMax])
     let segments = UsagePresentation.menuBar(snapshot, settings: settings)
-    expect(segments.map(\.text) == ["Cx 64·81", "Cl 35·88", "Cu 4"], "menu bar segments")
-    expect(segments.map(\.tone) == [.plenty, .moderate, .critical] &&
-           segments.map(\.stale) == [false, true, false], "segment tone and staleness")
+    expect(segments.map(\.primary) == ["64", "35", "4"] &&
+           segments.map(\.secondary) == ["81", "88", nil], "5-hour large, week as an index")
+    expect(segments.map(\.primaryTone) == [.plenty, .moderate, .critical] &&
+           segments.map(\.secondaryTone) == [.plenty, .plenty, nil] &&
+           segments.map(\.stale) == [false, true, false], "each number keeps its own tone")
+    expect(segments.map(\.accessibilityText) ==
+           ["Codex 5-hour 64% left, week 81% left", "Claude 5-hour 35% left, week 88% left",
+            "Cursor budget 4% left"], "spoken segment")
     settings.displayMode = .used
     settings.hiddenInMenuBar = [.cursor]
     settings.providerOrder = [.claude, .cursor, .codex]
-    expect(UsagePresentation.menuBar(snapshot, settings: settings).map(\.text) ==
-           ["Cl 65·12", "Cx 36·19"], "used mode, hidden provider and order")
+    let used = UsagePresentation.menuBar(snapshot, settings: settings)
+    expect(used.map(\.provider) == [.claude, .codex] && used.map(\.primary) == ["65", "36"] &&
+           used.map(\.secondary) == ["12", "19"], "used mode, hidden provider and order")
     expect(UsagePresentation.menuBar(nil, settings: settings).isEmpty, "nothing to show yet")
 }
 
@@ -212,7 +236,7 @@ formatChecks()
 toneChecks()
 rowChecks()
 cardChecks()
-popoverChecks()
+menuContentChecks()
 menuBarChecks()
 settingsChecks()
 alertChecks()

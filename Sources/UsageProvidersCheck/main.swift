@@ -347,6 +347,9 @@ private final class FakeUsageProvider: AiUsageProviderRefreshing {
         lock.unlock()
         callback(outcome)
     }
+    private var storedAccessRequests = 0
+    var accessRequests: Int { lock.lock(); defer { lock.unlock() }; return storedAccessRequests }
+    func requestAccess() { lock.lock(); storedAccessRequests += 1; lock.unlock() }
 }
 
 private final class FakeRetryScheduler {
@@ -940,11 +943,12 @@ func claudeExpiredTokenWaitsQuietlyForKeychainAccess() {
     credentials.result = .interactionRequired
     let expired = refreshed(provider)
     expect(waitUntil { expired.done })
-    expect(expired.outcome == .unavailable && http.requests.count == 1)
+    // No prompt on its own, but the menu can offer to ask.
+    expect(expired.outcome == .accessNeeded && http.requests.count == 1)
     expect(credentials.interactions == [true, false])
     let again = refreshed(provider)
     expect(waitUntil { again.done })
-    expect(again.outcome == .unavailable && credentials.reads == 2)
+    expect(again.outcome == .accessNeeded && credentials.reads == 2)
     clock.now = Date(timeIntervalSince1970: 13_900)
     credentials.result = claudeCredential(token: "renewed", expiresAt: Date(timeIntervalSince1970: 40_000))
     _ = refreshed(provider)
@@ -1082,15 +1086,52 @@ func claudeDenialPausesKeychainReads() {
     let provider = claudeProvider(credentials, http, clock)
     let first = refreshed(provider)
     expect(waitUntil { first.done })
-    expect(first.outcome == .absent)
+    expect(first.outcome == .accessNeeded)
     credentials.result = claudeCredential(expiresAt: Date(timeIntervalSince1970: 20_000))
     let paused = refreshed(provider)
     expect(waitUntil { paused.done })
-    expect(paused.outcome == .absent && credentials.reads == 1 && http.requests.isEmpty)
+    expect(paused.outcome == .accessNeeded && credentials.reads == 1 && http.requests.isEmpty)
     clock.now = Date(timeIntervalSince1970: 13_601)
     _ = refreshed(provider)
     expect(waitUntil { http.requests.count == 1 })
     expect(credentials.reads == 2)
+}
+
+func claudeAccessRequestAsksAgainAtOnce() {
+    let http = FakeHTTP()
+    let clock = TestClock()
+    let credentials = FakeClaudeCredentials(.denied)
+    let provider = claudeProvider(credentials, http, clock)
+    let denied = refreshed(provider)
+    expect(waitUntil { denied.done })
+    expect(denied.outcome == .accessNeeded)
+    credentials.result = claudeCredential()
+    provider.requestAccess()
+    _ = refreshed(provider)
+    expect(waitUntil { http.requests.count == 1 })
+    expect(credentials.interactions == [true, true])
+}
+
+func collectorReportsProvidersThatNeedAccess() {
+    let codex = FakeUsageProvider()
+    let cursor = FakeUsageProvider()
+    let claude = FakeUsageProvider()
+    let collector = AiUsageCollector(codex: codex, cursor: cursor, claude: claude)
+    collector.start()
+    expect(waitUntil { codex.pending == 1 && cursor.pending == 1 && claude.pending == 1 })
+    codex.complete(nil, absent: true)
+    cursor.complete(nil, absent: true)
+    claude.complete(.accessNeeded)
+    expect(waitUntil { collector.snapshot()?.accessNeeded == [.claude] })
+    expect(collector.snapshot()?.state == .ready && collector.snapshot()?.providers.isEmpty == true)
+    collector.requestAccess(.claude)
+    expect(waitUntil { claude.accessRequests == 1 && claude.pending == 1 })
+    codex.complete(nil, absent: true)
+    cursor.complete(nil, absent: true)
+    claude.complete(AiUsageNormalization.claude(claudeUsage, subscriptionType: "max")!)
+    expect(waitUntil { collector.snapshot()?.accessNeeded == [] &&
+        collector.snapshot()?.providers.map(\.provider) == [.claude] })
+    collector.stop()
 }
 
 func collectorKeepsUnavailableSampleStaleWithoutRetry() {
@@ -1266,6 +1307,36 @@ func claudeAsksAtMostEveryTwoMinutes() {
     expect(waitUntil { http.requests.count == 2 })
 }
 
+func collectorReportsDetectedProvidersWithoutReading() {
+    let codex = FakeUsageProvider()
+    let cursor = FakeUsageProvider()
+    let claude = FakeUsageProvider()
+    let collector = AiUsageCollector(codex: codex, cursor: cursor, claude: claude,
+                                     scheduleRetry: { _, _ in })
+    collector.start()
+    expect(waitUntil { codex.pending == 1 && cursor.pending == 1 && claude.pending == 1 })
+    codex.complete(nil, absent: true)
+    cursor.complete(nil, absent: true)
+    claude.complete(.unavailable)
+    expect(waitUntil { collector.snapshot()?.unreadable == [.claude] })
+    collector.refresh()
+    expect(waitUntil { codex.pending == 1 && cursor.pending == 1 && claude.pending == 1 })
+    codex.complete(nil, absent: true)
+    cursor.complete(nil, absent: true)
+    claude.complete(AiUsageNormalization.claude(claudeUsage, subscriptionType: "max")!)
+    expect(waitUntil { collector.snapshot()?.providers.map(\.provider) == [.claude] &&
+        collector.snapshot()?.unreadable == [] })
+    collector.refresh()
+    expect(waitUntil { codex.pending == 1 && cursor.pending == 1 && claude.pending == 1 })
+    codex.complete(nil, absent: true)
+    cursor.complete(nil, absent: true)
+    claude.complete(nil)
+    expect(waitUntil { claude.pending == 0 })
+    // A failure with a kept sample shows the card, not a notice.
+    expect(collector.snapshot()?.unreadable == [])
+    collector.stop()
+}
+
 @main enum UsageProvidersCheck {
     static func main() {
         providerPackageBoundary()
@@ -1306,6 +1377,9 @@ func claudeAsksAtMostEveryTwoMinutes() {
         collectorShowsElapsedStaleWindowsAsHistorical()
         collectorStampsSamplesAndReportsChanges()
         claudeAsksAtMostEveryTwoMinutes()
+        claudeAccessRequestAsksAgainAtOnce()
+        collectorReportsProvidersThatNeedAccess()
+        collectorReportsDetectedProvidersWithoutReading()
         if failures > 0 { exit(1) }
         print("provider checks passed")
     }

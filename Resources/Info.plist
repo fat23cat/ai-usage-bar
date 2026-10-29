@@ -8,6 +8,8 @@
     <string>AI Usage Bar</string>
     <key>CFBundleExecutable</key>
     <string>AIUsageBar</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>org.aiusagebar.app</string>
     <key>CFBundleInfoDictionaryVersion</key>

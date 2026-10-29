@@ -38,20 +38,28 @@ public struct UsageProviderCard: Equatable {
     public var details: [String]
 }
 
-public enum UsagePopoverContent: Equatable {
+public enum UsageMenuContent: Equatable {
     /// The first discovery is still running and nothing can be shown yet.
     case checking
     /// Discovery finished without a signed-in provider.
     case empty
-    case cards([UsageProviderCard], waiting: [AiProviderId])
+    /// Provider cards, then providers waiting for a Keychain prompt, providers
+    /// that need Keychain access (these may also have a stale card), and
+    /// detected providers without a reading.
+    case cards([UsageProviderCard], waiting: [AiProviderId], accessNeeded: [AiProviderId],
+               unreadable: [AiProviderId] = [])
 }
 
+/// One provider in the menu bar: its glyph, the first metric (5-hour, or the
+/// only one) large, and the second (week) as a small index.
 public struct UsageMenuBarSegment: Equatable {
     public var provider: AiProviderId
-    /// For example "Cx 64·81".
-    public var text: String
-    public var tone: UsageTone
+    public var primary: String
+    public var primaryTone: UsageTone
+    public var secondary: String?
+    public var secondaryTone: UsageTone?
     public var stale: Bool
+    public var accessibilityText: String
 }
 
 public enum UsageFormat {
@@ -205,18 +213,25 @@ public enum UsagePresentation {
                                  details: details(provider, mode: mode))
     }
 
-    public static func popover(_ snapshot: AiUsageSnapshot?, settings: UsageSettings,
-                               now: Date) -> UsagePopoverContent {
+    public static func menuContent(_ snapshot: AiUsageSnapshot?, settings: UsageSettings,
+                               now: Date) -> UsageMenuContent {
         guard let snapshot else { return .checking }
         let waiting = settings.ordered(
             snapshot.waiting.filter { id in !snapshot.providers.contains { $0.provider == id } },
             by: { $0 })
-        if snapshot.providers.isEmpty && waiting.isEmpty {
+        let accessNeeded = settings.ordered(snapshot.accessNeeded, by: { $0 })
+        let unreadable = settings.ordered(snapshot.unreadable.filter { id in
+            !snapshot.providers.contains { $0.provider == id } && !waiting.contains(id) &&
+                !accessNeeded.contains(id)
+        }, by: { $0 })
+        if snapshot.providers.isEmpty && waiting.isEmpty && accessNeeded.isEmpty &&
+            unreadable.isEmpty {
             return snapshot.state == .discovering ? .checking : .empty
         }
         let cards = settings.ordered(snapshot.providers, by: \.provider)
             .map { card($0, mode: settings.displayMode, now: now) }
-        return .cards(cards, waiting: waiting)
+        return .cards(cards, waiting: waiting, accessNeeded: accessNeeded,
+                      unreadable: unreadable)
     }
 
     /// One segment per visible provider; empty when nothing can be shown.
@@ -226,15 +241,22 @@ public enum UsagePresentation {
         return settings.ordered(snapshot.providers, by: \.provider)
             .filter { !settings.hiddenInMenuBar.contains($0.provider) && !$0.metrics.isEmpty }
             .map { provider in
-                let values = provider.metrics
-                    .map { String(UsageFormat.shownPercent($0, settings.displayMode)) }
-                let worst = provider.metrics.map(\.remainingPercent).min() ?? 100
+                let mode = settings.displayMode
+                let first = provider.metrics[0]
+                let second = provider.metrics.dropFirst().first
+                let spoken = provider.metrics.map {
+                    "\(UsageFormat.metricLabel($0.kind).lowercased()) " +
+                        row($0, mode: mode).valueText.replacingOccurrences(of: " !", with: "")
+                }
                 return UsageMenuBarSegment(
                     provider: provider.provider,
-                    text: "\(UsageFormat.abbreviation(provider.provider)) " +
-                        values.joined(separator: "·"),
-                    tone: UsageTone(remainingPercent: worst),
-                    stale: provider.freshness == .stale)
+                    primary: String(UsageFormat.shownPercent(first, mode)),
+                    primaryTone: UsageTone(remainingPercent: first.remainingPercent),
+                    secondary: second.map { String(UsageFormat.shownPercent($0, mode)) },
+                    secondaryTone: second.map { UsageTone(remainingPercent: $0.remainingPercent) },
+                    stale: provider.freshness == .stale,
+                    accessibilityText: "\(UsageFormat.providerName(provider.provider)) " +
+                        spoken.joined(separator: ", "))
             }
     }
 }

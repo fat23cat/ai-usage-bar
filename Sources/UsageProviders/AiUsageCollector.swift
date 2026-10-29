@@ -17,6 +17,8 @@ public final class AiUsageCollector: AiUsageCollecting {
     private var pending = 0
     private var samples: [AiProviderId: AiUsageProviderSnapshot] = [:]
     private var waiting: Set<AiProviderId> = []
+    private var accessNeeded: Set<AiProviderId> = []
+    private var unreadable: Set<AiProviderId> = []
     private var freshAt: [AiProviderId: Date] = [:]
     private var refreshId: UInt64 = 0
     private var retryId: UInt64 = 0
@@ -76,6 +78,7 @@ public final class AiUsageCollector: AiUsageCollecting {
         wakeObserver = nil
         refreshSerial.sync {
             running = false; samples.removeAll(); freshAt.removeAll(); waiting.removeAll()
+            accessNeeded.removeAll(); unreadable.removeAll()
             pending = 0
             refreshRequested = false; cycleFailed = false; retryDelay = 1
             refreshId &+= 1; retryId &+= 1
@@ -112,6 +115,12 @@ public final class AiUsageCollector: AiUsageCollecting {
             if self.pending != 0 { self.refreshRequested = true; return }
             self.startRefresh()
         }
+    }
+
+    /// Shows the provider's Keychain prompt again on an immediate refresh.
+    public func requestAccess(_ provider: AiProviderId) {
+        providers.first { $0.0 == provider }?.1.requestAccess()
+        refresh()
     }
 
     private func startRefresh() {
@@ -171,9 +180,14 @@ public final class AiUsageCollector: AiUsageCollecting {
                                    state: .forCache(pending: pending + waiting.count,
                                                     hasUsableProvider: !providers.isEmpty),
                                    providers: providers,
-                                   waiting: self.providers.map(\.0).filter(waiting.contains))
+                                   waiting: self.providers.map(\.0).filter(waiting.contains),
+                                   accessNeeded: self.providers.map(\.0)
+                                       .filter(accessNeeded.contains),
+                                   unreadable: self.providers.map(\.0)
+                                       .filter { unreadable.contains($0) && samples[$0] == nil })
         let changed = cached.state != next.state || cached.providers != next.providers ||
-            cached.waiting != next.waiting
+            cached.waiting != next.waiting || cached.accessNeeded != next.accessNeeded ||
+            cached.unreadable != next.unreadable
         if changed { cached = next }
         lock.unlock()
         if changed { onChange?() }
@@ -195,6 +209,16 @@ public final class AiUsageCollector: AiUsageCollecting {
         refreshSerial.async {
             guard self.running, self.refreshId == id else { return }
             if outcome == .waiting { self.waiting.insert(provider) } else { self.waiting.remove(provider) }
+            if outcome == .failed || outcome == .unavailable {
+                self.unreadable.insert(provider)
+            } else {
+                self.unreadable.remove(provider)
+            }
+            if outcome == .accessNeeded {
+                self.accessNeeded.insert(provider)
+            } else {
+                self.accessNeeded.remove(provider)
+            }
             switch outcome {
             case .absent:
                 self.samples.removeValue(forKey: provider)
@@ -213,7 +237,7 @@ public final class AiUsageCollector: AiUsageCollecting {
                     prior.freshness = age.map { $0 < 90 } == true ? .fresh : .stale
                     self.samples[provider] = prior
                 }
-            case .unavailable, .waiting:
+            case .unavailable, .waiting, .accessNeeded:
                 self.samples[provider]?.freshness = .stale
             }
             self.pending -= 1
