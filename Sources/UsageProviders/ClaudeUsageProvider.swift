@@ -55,19 +55,6 @@ final class KeychainClaudeCredentials: ClaudeCredentialReading {
     }
 }
 
-/// Calls a refresh completion at most once, whichever of the read timeout and
-/// the result comes first.
-private final class RefreshCompletion {
-    private let lock = NSLock()
-    private var done: ((AiUsageRefreshOutcome) -> Void)?
-    init(_ done: @escaping (AiUsageRefreshOutcome) -> Void) { self.done = done }
-    var finished: Bool { lock.lock(); defer { lock.unlock() }; return done == nil }
-    func callAsFunction(_ outcome: AiUsageRefreshOutcome) {
-        lock.lock(); let callback = done; done = nil; lock.unlock()
-        callback?(outcome)
-    }
-}
-
 /// Diagnostics without credentials: `log stream --predicate 'subsystem == "org.aiusagebar.app"'`.
 private let log = Logger(subsystem: "org.aiusagebar.app", category: "claude")
 
