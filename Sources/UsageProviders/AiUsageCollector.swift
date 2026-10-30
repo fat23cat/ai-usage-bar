@@ -3,6 +3,12 @@ import UsageCore
 import Foundation
 
 public final class AiUsageCollector: AiUsageCollecting {
+    /// Providers refresh on this period; wake and menu refreshes add
+    /// refreshes in between.
+    static let refreshInterval: TimeInterval = 120
+    /// A sample stays fresh through one missed periodic refresh while failure
+    /// retries run, then it is marked stale.
+    static let freshnessWindow: TimeInterval = refreshInterval + 90
     private let lock = NSLock()
     // Discovery order; the app reorders providers for display.
     private let providers: [(AiProviderId, AiUsageProviderRefreshing)]
@@ -64,7 +70,7 @@ public final class AiUsageCollector: AiUsageCollecting {
         }
         guard shouldStart else { return }
         refresh()
-        cancelPeriodic = schedulePeriodic(30) { [weak self] in
+        cancelPeriodic = schedulePeriodic(Self.refreshInterval) { [weak self] in
             self?.refresh()
         }
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -95,7 +101,7 @@ public final class AiUsageCollector: AiUsageCollecting {
             let provider = cached.providers[index].provider
             if cached.providers[index].freshness == .fresh,
                let sampledAt = cachedFreshAt[provider],
-               currentTime.timeIntervalSince(sampledAt) >= 90 {
+               currentTime.timeIntervalSince(sampledAt) >= Self.freshnessWindow {
                 cached.providers[index].freshness = .stale
                 expired = true
             }
@@ -168,7 +174,7 @@ public final class AiUsageCollector: AiUsageCollecting {
             guard var sample = samples[provider] else { return nil }
             if sample.freshness == .fresh,
                let sampledAt = freshAt[provider],
-               currentTime.timeIntervalSince(sampledAt) >= 90 {
+               currentTime.timeIntervalSince(sampledAt) >= Self.freshnessWindow {
                 sample.freshness = .stale
             }
             return sample.freshness == .stale
@@ -234,7 +240,7 @@ public final class AiUsageCollector: AiUsageCollecting {
                 self.cycleFailed = true
                 if var prior = self.samples[provider], prior.freshness != .stale {
                     let age = self.freshAt[provider].map { self.now().timeIntervalSince($0) }
-                    prior.freshness = age.map { $0 < 90 } == true ? .fresh : .stale
+                    prior.freshness = age.map { $0 < Self.freshnessWindow } == true ? .fresh : .stale
                     self.samples[provider] = prior
                 }
             case .unavailable, .waiting, .accessNeeded:

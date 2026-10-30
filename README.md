@@ -42,7 +42,7 @@ Requires macOS 13 or later on Apple silicon or Intel.
 | Cursor | the Cursor Agent Keychain session and `cursor.com/api/usage-summary` | Personal spend against the limit |
 
 A provider that is not installed or signed in is left out. A provider that
-fails keeps its last sample, marked **stale** after 90 seconds. A detected
+fails keeps its last sample, marked **stale** after three and a half minutes. A detected
 provider without any reading yet says **No current reading** and retries. If
 macOS refuses Keychain access (a declined prompt, or Claude Code rewrote its
 item), the menu says so and offers **Allow Access to Claude…**, which shows
@@ -54,9 +54,10 @@ The app only reads credentials; it never writes, refreshes or sends them
 anywhere except the provider's own endpoint. Claude Code refreshes its token
 only while it runs, so Claude may turn stale while Claude Code is closed.
 
-The Claude usage endpoint rate-limits callers. The app asks it at most every
-two minutes and backs off on HTTP 429, so it can run next to Cardputer
-Companion, which polls the same account once a minute.
+Providers refresh every two minutes, on wake, and from Refresh. The Claude
+usage endpoint rate-limits callers, so the app asks it at most once per
+two-minute refresh (never sooner than 110 seconds apart) and backs off on HTTP
+429. Cardputer Companion polls the same account on the same schedule.
 
 ## Settings
 
