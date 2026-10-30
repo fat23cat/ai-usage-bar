@@ -51,8 +51,13 @@ passing never counts as replenished quota: the last reading stays until a new
 one arrives.
 
 The app only reads credentials; it never writes, refreshes or sends them
-anywhere except the provider's own endpoint. Claude Code refreshes its token
-only while it runs, so Claude may turn stale while Claude Code is closed.
+anywhere except the provider's own endpoint. Claude Code renews its token only
+while it runs, so when the token has expired the app runs the `claude` CLI once
+with a one-word Haiku prompt (no tools, hooks, MCP servers or saved session)
+to let it renew the Keychain item. That small request counts against your
+plan. If it fails, or the CLI is not installed or signed in
+(`claude auth login`), it is tried again after 15 minutes and Claude stays
+stale.
 
 Providers refresh every two minutes, on wake, and from Refresh. The Claude
 usage endpoint rate-limits callers, so the app asks it at most once per
