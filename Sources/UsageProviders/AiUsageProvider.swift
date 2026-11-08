@@ -17,6 +17,10 @@ enum AiUsageRefreshOutcome: Equatable {
     /// user declined the Keychain prompt, or the item was rewritten without
     /// this app's access. Like `unavailable`; `requestAccess()` asks again.
     case accessNeeded
+    /// The source is installed but its CLI is signed out (its credential item
+    /// holds no token). Drop any prior sample; only the user can sign in, so
+    /// this is not a failure to retry.
+    case signedOut
 
     var sample: AiUsageProviderSnapshot? {
         if case .sample(let value) = self { return value }

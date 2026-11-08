@@ -102,12 +102,16 @@ public struct AiUsageSnapshot: Equatable {
     /// Detected providers without any reading yet: their last refresh failed or
     /// the source cannot answer now (a rate limit, an expired sign-in).
     public var unreadable: [AiProviderId]
+    /// Installed providers whose CLI is signed out; only the user can sign in.
+    public var signedOut: [AiProviderId]
 
     public init(generation: UInt32 = 0, state: AiUsageState = .discovering,
                 providers: [AiUsageProviderSnapshot] = [], waiting: [AiProviderId] = [],
-                accessNeeded: [AiProviderId] = [], unreadable: [AiProviderId] = []) {
+                accessNeeded: [AiProviderId] = [], unreadable: [AiProviderId] = [],
+                signedOut: [AiProviderId] = []) {
         self.generation = generation; self.state = state; self.providers = providers
         self.waiting = waiting; self.accessNeeded = accessNeeded; self.unreadable = unreadable
+        self.signedOut = signedOut
     }
 }
 

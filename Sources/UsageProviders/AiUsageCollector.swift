@@ -25,6 +25,7 @@ public final class AiUsageCollector: AiUsageCollecting {
     private var waiting: Set<AiProviderId> = []
     private var accessNeeded: Set<AiProviderId> = []
     private var unreadable: Set<AiProviderId> = []
+    private var signedOut: Set<AiProviderId> = []
     private var freshAt: [AiProviderId: Date] = [:]
     private var refreshId: UInt64 = 0
     private var retryId: UInt64 = 0
@@ -84,7 +85,7 @@ public final class AiUsageCollector: AiUsageCollecting {
         wakeObserver = nil
         refreshSerial.sync {
             running = false; samples.removeAll(); freshAt.removeAll(); waiting.removeAll()
-            accessNeeded.removeAll(); unreadable.removeAll()
+            accessNeeded.removeAll(); unreadable.removeAll(); signedOut.removeAll()
             pending = 0
             refreshRequested = false; cycleFailed = false; retryDelay = 1
             refreshId &+= 1; retryId &+= 1
@@ -190,10 +191,11 @@ public final class AiUsageCollector: AiUsageCollecting {
                                    accessNeeded: self.providers.map(\.0)
                                        .filter(accessNeeded.contains),
                                    unreadable: self.providers.map(\.0)
-                                       .filter { unreadable.contains($0) && samples[$0] == nil })
+                                       .filter { unreadable.contains($0) && samples[$0] == nil },
+                                   signedOut: self.providers.map(\.0).filter(signedOut.contains))
         let changed = cached.state != next.state || cached.providers != next.providers ||
             cached.waiting != next.waiting || cached.accessNeeded != next.accessNeeded ||
-            cached.unreadable != next.unreadable
+            cached.unreadable != next.unreadable || cached.signedOut != next.signedOut
         if changed { cached = next }
         lock.unlock()
         if changed { onChange?() }
@@ -220,13 +222,18 @@ public final class AiUsageCollector: AiUsageCollecting {
             } else {
                 self.unreadable.remove(provider)
             }
+            if outcome == .signedOut {
+                self.signedOut.insert(provider)
+            } else {
+                self.signedOut.remove(provider)
+            }
             if outcome == .accessNeeded {
                 self.accessNeeded.insert(provider)
             } else {
                 self.accessNeeded.remove(provider)
             }
             switch outcome {
-            case .absent:
+            case .absent, .signedOut:
                 self.samples.removeValue(forKey: provider)
                 self.freshAt.removeValue(forKey: provider)
             case .sample(var sample):

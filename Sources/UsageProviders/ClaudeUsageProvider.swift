@@ -12,6 +12,8 @@ struct ClaudeCredential {
 enum ClaudeCredentialResult {
     case value(ClaudeCredential)
     case absent
+    /// The item exists without a token: Claude Code is signed out.
+    case signedOut
     case denied
     case failed
     case interactionRequired
@@ -39,10 +41,13 @@ final class KeychainClaudeCredentials: ClaudeCredentialReading {
         if result.status == 44 { return .absent }
         guard result.status == 0,
               let object = try? JSONSerialization.jsonObject(with: result.output) as? [String: Any],
-              let oauth = object["claudeAiOauth"] as? [String: Any],
-              let token = oauth["accessToken"] as? String, !token.isEmpty,
-              !token.contains("\r"), !token.contains("\n")
+              let oauth = object["claudeAiOauth"] as? [String: Any]
         else { return .failed }
+        // A sign-out, or a renewal Claude Code could not complete, keeps the
+        // item but empties its tokens.
+        guard let token = oauth["accessToken"] as? String, !token.isEmpty
+        else { return .signedOut }
+        guard !token.contains("\r"), !token.contains("\n") else { return .failed }
         let expiresAt = (oauth["expiresAt"] as? NSNumber)
             .map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
         return .value(ClaudeCredential(accessToken: token,
@@ -177,6 +182,7 @@ final class ClaudeUsageProvider: AiUsageProviderRefreshing {
                 let left = value.expiresAt.map { Int($0.timeIntervalSince(now())) }
                 log.info("keychain: token, expires in \(left ?? 0, privacy: .public)s, interactive \(allowInteraction, privacy: .public)")
             case .absent: log.info("keychain: no item")
+            case .signedOut: log.info("keychain: signed out")
             case .denied: log.info("keychain: denied")
             case .failed: log.info("keychain: unreadable item")
             case .interactionRequired:
@@ -188,7 +194,7 @@ final class ClaudeUsageProvider: AiUsageProviderRefreshing {
             case .value(let value):
                 credential = value; credentialReadAt = now(); deniedAt = nil
                 interactionRetryAt = .distantPast; needsAccess = false
-            case .absent: credential = nil; deniedAt = nil; needsAccess = false
+            case .absent, .signedOut: credential = nil; deniedAt = nil; needsAccess = false
             case .denied: credential = nil; deniedAt = now(); needsAccess = true
             // Keep a still-valid token; the next recheck is due in five minutes.
             case .interactionRequired:
@@ -210,6 +216,7 @@ final class ClaudeUsageProvider: AiUsageProviderRefreshing {
             case .value where throttled: finish(cached)
             case .value(let value): request(value, finish)
             case .absent: finish(.absent)
+            case .signedOut: finish(.signedOut)
             case .denied: finish(.accessNeeded)
             case .interactionRequired: finish(cached)
             case .failed: finish(.failed)

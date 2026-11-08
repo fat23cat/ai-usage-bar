@@ -44,6 +44,10 @@ Requires macOS 13 or later on Apple silicon or Intel.
 A provider that is not installed or signed in is left out. A provider that
 fails keeps its last sample, marked **stale** after three and a half minutes. A detected
 provider without any reading yet says **No current reading** and retries.
+When Claude Code is signed out (`claude auth logout`, or a token renewal it
+could not complete, leaves its Keychain item without a token), Claude says
+**Claude Code is signed out. Run claude auth login in Terminal.** and no
+usage request is sent until you sign in again.
 Claude's Keychain item is read through `/usr/bin/security`, the tool Claude
 Code writes it with, so it never prompts: Claude Code rewrites the item on every
 token renewal and resets its partition list, which would drop an

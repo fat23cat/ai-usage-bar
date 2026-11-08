@@ -100,7 +100,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             views = [AnyView(MenuNoticeView(
                 title: "No AI providers found",
                 detail: "Sign in to Codex, Cursor, or Claude Code on this Mac."))]
-        case .cards(let cards, let waiting, let access, let unreadable):
+        case .cards(let cards, let waiting, let access, let unreadable, let signedOut):
             accessNeeded = access
             views = cards.map { AnyView(ProviderCardView(card: $0)) } + waiting.map {
                 AnyView(MenuNoticeView(
@@ -116,6 +116,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 AnyView(MenuNoticeView(
                     provider: $0, title: UsageFormat.providerName($0),
                     detail: "No current reading. Retrying automatically."))
+            }
+            views += signedOut.map {
+                AnyView(MenuNoticeView(
+                    provider: $0, title: UsageFormat.providerName($0),
+                    detail: "\(Self.credentialOwner($0)) is signed out. Run "
+                        + "\(UsageFormat.signInCommand($0)) in Terminal."))
             }
         }
         contentItems = []
