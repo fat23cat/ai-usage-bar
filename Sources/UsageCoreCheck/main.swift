@@ -129,7 +129,7 @@ func menuContentChecks() {
                                      now: now) == .empty, "nothing signed in")
     let snapshot = AiUsageSnapshot(state: .ready,
                                    providers: [codexPlus, cursorEnterprise, claudeMax])
-    guard case .cards(let cards, let waiting, let access, _) =
+    guard case .cards(let cards, let waiting, let access, _, _) =
         UsagePresentation.menuContent(snapshot, settings: settings, now: now) else {
         return expect(false, "cards for signed-in providers")
     }
@@ -140,7 +140,7 @@ func menuContentChecks() {
            .cards([], waiting: [.claude], accessNeeded: []),
            "a Keychain prompt is shown, not a spinner")
     let answered = AiUsageSnapshot(state: .ready, providers: [claudeMax], waiting: [.claude])
-    guard case .cards(_, let none, _, _) =
+    guard case .cards(_, let none, _, _, _) =
         UsagePresentation.menuContent(answered, settings: settings, now: now) else {
         return expect(false, "cards while a recheck waits")
     }
@@ -154,9 +154,20 @@ func menuContentChecks() {
            .cards([UsagePresentation.card(codexPlus, mode: .left, now: now)], waiting: [],
                   accessNeeded: [], unreadable: [.claude]),
            "a detected provider without a reading says so instead of vanishing")
+    let signedOut = AiUsageSnapshot(state: .ready, providers: [codexPlus],
+                                    unreadable: [.claude], signedOut: [.claude])
+    expect(UsagePresentation.menuContent(signedOut, settings: settings, now: now) ==
+           .cards([UsagePresentation.card(codexPlus, mode: .left, now: now)], waiting: [],
+                  accessNeeded: [], unreadable: [], signedOut: [.claude]),
+           "a signed-out provider asks to sign in, not to wait for a retry")
+    expect(UsagePresentation.menuContent(AiUsageSnapshot(state: .ready, signedOut: [.claude]),
+                                         settings: settings, now: now) ==
+           .cards([], waiting: [], accessNeeded: [], unreadable: [], signedOut: [.claude]),
+           "a signed-out provider alone is not an empty menu")
+    expect(UsageFormat.signInCommand(.claude) == "claude auth login", "Claude sign-in command")
     let staleDeclined = AiUsageSnapshot(state: .ready, providers: [claudeMax],
                                         accessNeeded: [.claude])
-    guard case .cards(let kept, _, let offered, _) =
+    guard case .cards(let kept, _, let offered, _, _) =
         UsagePresentation.menuContent(staleDeclined, settings: settings, now: now) else {
         return expect(false, "cards while access is needed")
     }

@@ -44,10 +44,10 @@ public enum UsageMenuContent: Equatable {
     /// Discovery finished without a signed-in provider.
     case empty
     /// Provider cards, then providers waiting for a Keychain prompt, providers
-    /// that need Keychain access (these may also have a stale card), and
-    /// detected providers without a reading.
+    /// that need Keychain access (these may also have a stale card), detected
+    /// providers without a reading, and providers whose CLI is signed out.
     case cards([UsageProviderCard], waiting: [AiProviderId], accessNeeded: [AiProviderId],
-               unreadable: [AiProviderId] = [])
+               unreadable: [AiProviderId] = [], signedOut: [AiProviderId] = [])
 }
 
 /// One provider in the menu bar: its glyph, the first metric (5-hour, or the
@@ -68,6 +68,15 @@ public enum UsageFormat {
         case .codex: return "Codex"
         case .cursor: return "Cursor"
         case .claude: return "Claude"
+        }
+    }
+
+    /// The Terminal command that signs the provider's CLI back in.
+    public static func signInCommand(_ provider: AiProviderId) -> String {
+        switch provider {
+        case .codex: return "codex login"
+        case .cursor: return "cursor-agent login"
+        case .claude: return "claude auth login"
         }
     }
 
@@ -220,18 +229,19 @@ public enum UsagePresentation {
             snapshot.waiting.filter { id in !snapshot.providers.contains { $0.provider == id } },
             by: { $0 })
         let accessNeeded = settings.ordered(snapshot.accessNeeded, by: { $0 })
+        let signedOut = settings.ordered(snapshot.signedOut, by: { $0 })
         let unreadable = settings.ordered(snapshot.unreadable.filter { id in
             !snapshot.providers.contains { $0.provider == id } && !waiting.contains(id) &&
-                !accessNeeded.contains(id)
+                !accessNeeded.contains(id) && !signedOut.contains(id)
         }, by: { $0 })
         if snapshot.providers.isEmpty && waiting.isEmpty && accessNeeded.isEmpty &&
-            unreadable.isEmpty {
+            unreadable.isEmpty && signedOut.isEmpty {
             return snapshot.state == .discovering ? .checking : .empty
         }
         let cards = settings.ordered(snapshot.providers, by: \.provider)
             .map { card($0, mode: settings.displayMode, now: now) }
         return .cards(cards, waiting: waiting, accessNeeded: accessNeeded,
-                      unreadable: unreadable)
+                      unreadable: unreadable, signedOut: signedOut)
     }
 
     /// One segment per visible provider; empty when nothing can be shown.

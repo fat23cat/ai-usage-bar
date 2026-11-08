@@ -783,6 +783,10 @@ func claudeKeychainReadsThroughSecurityTool() {
     if case .failed = read((1, Data())) {} else { expect(false) }
     if case .failed = read((0, Data("not json\n".utf8))) {} else { expect(false) }
     if case .failed = read(nil) {} else { expect(false) }
+    // `claude auth logout` (or a failed renewal) leaves the item with empty tokens.
+    let signedOut = #"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,"#
+        + #""subscriptionType":"pro"}}"#
+    if case .signedOut = read((0, Data((signedOut + "\n").utf8))) {} else { expect(false) }
     // The real tool reports a missing item as errSecItemNotFound.
     expect(KeychainClaudeCredentials.runSecurity(
         ["find-generic-password", "-s", "ai-usage-bar-check-missing-item", "-w"])?.status == 44)
@@ -794,6 +798,20 @@ func claudeOmitsAbsentCredential() {
     expect(waitUntil { result.done })
     expect(result.outcome == .absent)
     expect(http.requests.isEmpty)
+}
+
+func claudeReportsSignedOutCredentialWithoutRequest() {
+    let http = FakeHTTP()
+    let renewer = FakeClaudeRenewer()
+    let provider = ClaudeUsageProvider(credentials: FakeClaudeCredentials(.signedOut), http: http,
+                                       now: { TestClock().now }, readTimeout: 2,
+                                       renewer: renewer)
+    let result = refreshed(provider)
+    expect(waitUntil { result.done })
+    expect(result.outcome == .signedOut)
+    // Only `claude auth login` signs Claude Code back in; renewing cannot.
+    Thread.sleep(forTimeInterval: 0.02)
+    expect(http.requests.isEmpty && renewer.calls == 0)
 }
 
 func claudeCachesTokenAndRechecksKeychain() {
@@ -1298,6 +1316,43 @@ func collectorKeepsUnavailableSampleStaleWithoutRetry() {
     collector.stop()
 }
 
+func collectorReportsSignedOutProviderWithoutRetry() {
+    let codex = FakeUsageProvider()
+    let cursor = FakeUsageProvider()
+    let claude = FakeUsageProvider()
+    let scheduler = FakeRetryScheduler()
+    let clock = TestClock()
+    let collector = AiUsageCollector(codex: codex, cursor: cursor, claude: claude,
+                                     now: { clock.now }, scheduleRetry: scheduler.schedule)
+    let sample = AiUsageNormalization.claude(claudeUsage, subscriptionType: "pro", now: clock.now)!
+    collector.start()
+    expect(waitUntil { claude.pending == 1 && codex.pending == 1 && cursor.pending == 1 })
+    codex.complete(nil, absent: true)
+    cursor.complete(nil, absent: true)
+    claude.complete(sample)
+    expect(waitUntil { collector.snapshot()?.providers.map(\.provider) == [.claude] })
+    collector.refresh()
+    expect(waitUntil { claude.pending == 1 && codex.pending == 1 && cursor.pending == 1 })
+    codex.complete(nil, absent: true)
+    cursor.complete(nil, absent: true)
+    claude.complete(.signedOut)
+    // The old account's card goes; the menu asks to sign in instead.
+    expect(waitUntil { collector.snapshot()?.signedOut == [.claude] })
+    expect(collector.snapshot()?.providers == [] && collector.snapshot()?.unreadable == [])
+    expect(collector.snapshot()?.state == .ready)
+    // Signing in is up to the user, so the regular refresh is enough.
+    Thread.sleep(forTimeInterval: 0.02)
+    expect(scheduler.delays.isEmpty)
+    collector.refresh()
+    expect(waitUntil { claude.pending == 1 && codex.pending == 1 && cursor.pending == 1 })
+    codex.complete(nil, absent: true)
+    cursor.complete(nil, absent: true)
+    claude.complete(sample)
+    expect(waitUntil { collector.snapshot()?.signedOut == [] &&
+        collector.snapshot()?.providers.map(\.provider) == [.claude] })
+    collector.stop()
+}
+
 func collectorKeepsDiscoveringWhileWaitingForUser() {
     let codex = FakeUsageProvider()
     let cursor = FakeUsageProvider()
@@ -1610,6 +1665,7 @@ func codexWithoutAccountIsAbsent() {
         claudeBuildsOAuthUsageRequest()
         claudeKeychainReadsThroughSecurityTool()
         claudeOmitsAbsentCredential()
+        claudeReportsSignedOutCredentialWithoutRequest()
         claudeCachesTokenAndRechecksKeychain()
         claudeRecheckKeepsTokenWhenKeychainFails()
         claudeWakeRecheckDoesNotPromptOrLoseWorkingToken()
@@ -1629,6 +1685,7 @@ func codexWithoutAccountIsAbsent() {
         claudeExpiredTokenIsUnavailable()
         claudeDenialPausesKeychainReads()
         collectorKeepsUnavailableSampleStaleWithoutRetry()
+        collectorReportsSignedOutProviderWithoutRetry()
         collectorPublishesPersonalCodexAndClaude()
         collectorShowsElapsedStaleWindowsAsHistorical()
         collectorStampsSamplesAndReportsChanges()
