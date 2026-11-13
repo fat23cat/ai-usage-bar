@@ -242,6 +242,17 @@ func alertChecks() {
            "a drop past both thresholds alerts once, in the chosen mode")
 }
 
+func statusMenuChecks() {
+    // Measured on macOS 27.2: a 30 pt bar on a 1080 pt screen, its status item
+    // window 57 pt tall and centered on the bar (midY 1065.5).
+    expect(StatusMenuPlacement.menuTop(screenTop: 1080, visibleTop: 1050, itemWindowMidY: 1065.5) == 1041,
+           "the first menu item starts 9 pt below a visible menu bar")
+    expect(StatusMenuPlacement.menuTop(screenTop: 1080, visibleTop: 1080, itemWindowMidY: 1065.5) == 1042,
+           "an auto-hidden menu bar is measured from the item window centered on it")
+    expect(StatusMenuPlacement.menuTop(screenTop: 956, visibleTop: 924, itemWindowMidY: 940) == 915,
+           "a notched screen's taller bar moves the status menu down with it")
+}
+
 normalizationChecks()
 formatChecks()
 toneChecks()
@@ -251,5 +262,6 @@ menuContentChecks()
 menuBarChecks()
 settingsChecks()
 alertChecks()
+statusMenuChecks()
 if failures > 0 { exit(1) }
 print("core checks passed")

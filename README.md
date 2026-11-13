@@ -17,7 +17,9 @@ used. A number turns red below 20% left; a stale provider is dimmed.
 Click the title to open a standard macOS menu, like Cardputer Companion's:
 a block per provider with each limit as a bar, the time to its reset, Codex
 Plus reset credits, Cursor spend and when the sample was read, then Refresh
-(⌘R), Launch at Login, Settings… (⌘,) and Quit (⌘Q).
+(⌘R), Launch at Login, Settings… (⌘,) and Quit (⌘Q). The menu opens just
+below the menu bar: macOS 27 drops a status item's own menu about 28 pt lower,
+so the app pops it up itself (`StatusMenuPlacement`).
 
 ## Install
 

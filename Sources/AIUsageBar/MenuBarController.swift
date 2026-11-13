@@ -48,7 +48,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                               keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
-        item.menu = menu
+        if let button = item.button {
+            button.target = self
+            button.action = #selector(openMenu)
+            button.sendAction(on: [.leftMouseDown, .rightMouseDown])
+        }
 
         changes = store.objectWillChange
             .receive(on: DispatchQueue.main)
@@ -65,6 +69,20 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         loginItem.refresh()
         loginRow.toggle.state = loginItem.enabled ? .on : .off
         updateContent()
+    }
+
+    /// Pops the menu up just below the menu bar instead of assigning it to
+    /// `NSStatusItem.menu`, which macOS 27 opens about 28 pt lower.
+    @objc private func openMenu() {
+        guard let button = item.button, let window = button.window, let screen = window.screen else {
+            return
+        }
+        let top = StatusMenuPlacement.menuTop(screenTop: screen.frame.maxY,
+                                              visibleTop: screen.visibleFrame.maxY,
+                                              itemWindowMidY: window.frame.midY)
+        button.highlight(true)
+        menu.popUp(positioning: nil, at: NSPoint(x: window.frame.minX, y: top), in: nil)
+        button.highlight(false)
     }
 
     func menuWillOpen(_ menu: NSMenu) { isOpen = true }
